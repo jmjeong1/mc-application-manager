@@ -29,11 +29,11 @@ import io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext;
 import kr.co.mcmp.softwarecatalog.application.constants.DeploymentType;
 import kr.co.mcmp.softwarecatalog.application.model.ApplicationStatus;
 import kr.co.mcmp.softwarecatalog.application.model.DeploymentHistory;
-import kr.co.mcmp.softwarecatalog.application.model.LifecycleEvent;
+import kr.co.mcmp.softwarecatalog.application.model.AbnormalEvent;
 import kr.co.mcmp.softwarecatalog.application.model.ResourceMetricsHistory;
 import kr.co.mcmp.softwarecatalog.application.repository.ApplicationStatusRepository;
 import kr.co.mcmp.softwarecatalog.application.repository.DeploymentHistoryRepository;
-import kr.co.mcmp.softwarecatalog.application.repository.LifecycleEventRepository;
+import kr.co.mcmp.softwarecatalog.application.repository.AbnormalEventRepository;
 import kr.co.mcmp.softwarecatalog.application.repository.ResourceMetricsHistoryRepository;
 import kr.co.mcmp.softwarecatalog.application.repository.ScalingEventRepository;
 import kr.co.mcmp.softwarecatalog.application.model.ScalingEvent;
@@ -55,7 +55,7 @@ public class KubernetesMonitoringService {
     private final ApplicationStatusRepository statusRepository;
     private final ScalingEventRepository scalingEventRepository;
     private final ResourceMetricsHistoryRepository metricsHistoryRepository;
-    private final LifecycleEventRepository lifecycleEventRepository;
+    private final AbnormalEventRepository abnormalEventRepository;
     private final KubernetesLogCollector logCollector;
     private final K8sAutoscaleService k8sAutoscaleService;
     private final CbtumblebugRestApi cbtumblebugRestApi;
@@ -315,7 +315,7 @@ public class KubernetesMonitoringService {
         saveMetricsSnapshotIfDue(deployment, status, pods);
 
         // Detect and save Pod lifecycle events (OOM, CrashLoop, etc.)
-        detectAndSavePodEvents(deployment, pods);
+        detectAndSaveAbnormalPodEvents(deployment, pods);
 
         statusRepository.save(status);
         log.debug("ApplicationStatus saved successfully for catalogId={}", catalogId);
@@ -407,7 +407,7 @@ public class KubernetesMonitoringService {
     /**
      * Detects and saves OOMKilled, CrashLoopBackOff, and restart surge events from Pod containerStatuses.
      */
-    private void detectAndSavePodEvents(DeploymentHistory deployment, List<Pod> pods) {
+    private void detectAndSaveAbnormalPodEvents(DeploymentHistory deployment, List<Pod> pods) {
         Long deploymentId = deployment.getId();
         LocalDateTime now = LocalDateTime.now();
 
@@ -428,7 +428,7 @@ public class KubernetesMonitoringService {
                         && cs.getLastState().getTerminated() != null
                         && "OOMKilled".equals(cs.getLastState().getTerminated().getReason())) {
                     try {
-                        lifecycleEventRepository.save(LifecycleEvent.builder()
+                        abnormalEventRepository.save(AbnormalEvent.builder()
                                 .deploymentId(deploymentId)
                                 .eventType("OOM_KILLED")
                                 .severity("CRITICAL")
@@ -450,7 +450,7 @@ public class KubernetesMonitoringService {
                         && cs.getState().getWaiting() != null
                         && "CrashLoopBackOff".equals(cs.getState().getWaiting().getReason())) {
                     try {
-                        lifecycleEventRepository.save(LifecycleEvent.builder()
+                        abnormalEventRepository.save(AbnormalEvent.builder()
                                 .deploymentId(deploymentId)
                                 .eventType("CRASH_LOOP")
                                 .severity("CRITICAL")
@@ -471,7 +471,7 @@ public class KubernetesMonitoringService {
                         && cs.getState().getWaiting() != null
                         && "ImagePullBackOff".equals(cs.getState().getWaiting().getReason())) {
                     try {
-                        lifecycleEventRepository.save(LifecycleEvent.builder()
+                        abnormalEventRepository.save(AbnormalEvent.builder()
                                 .deploymentId(deploymentId)
                                 .eventType("IMAGE_PULL_ERROR")
                                 .severity("WARNING")
@@ -496,7 +496,7 @@ public class KubernetesMonitoringService {
                 String eventType = increment >= 3 ? "CRASH_LOOP" : "RESTART";
                 String severity = increment >= 3 ? "CRITICAL" : "WARNING";
                 try {
-                    lifecycleEventRepository.save(LifecycleEvent.builder()
+                    abnormalEventRepository.save(AbnormalEvent.builder()
                             .deploymentId(deploymentId)
                             .eventType(eventType)
                             .severity(severity)
